@@ -1,0 +1,19 @@
+{
+  "name": "gov-car-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "公务用车管理系统 - 飞书集成 Web 应用",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:web": "cd apps/web && npm run dev",
+    "dev:server": "cd apps/server && npm run dev",
+    "build": "npm run build:server && npm run build:web",
+    "build:web": "cd apps/web && npm run build",
+    "build:server": "cd apps/server && npm run build",
+    "db:migrate": "cd apps/server && npx prisma migrate dev",
+    "db:seed": "cd apps/server && npx prisma db seed"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
