@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: govcar-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME:-gov_car}
+      MYSQL_USER: ${DB_USER:-govcar}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../../sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    ports:
+      - '3306:3306'
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost']
+      interval: 10s
+      retries: 5
+
+  server:
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile.server
+    container_name: govcar-server
+    restart: unless-stopped
+    environment:
+      - DB_TYPE=${DB_TYPE:-mysql}
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${DB_USER:-govcar}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-gov_car}
+      - JWT_SECRET=${JWT_SECRET}
+      - NODE_ENV=${NODE_ENV:-production}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - PORT=8080
+      - FEISHU_APP_ID=${FEISHU_APP_ID}
+      - FEISHU_APP_SECRET=${FEISHU_APP_SECRET}
+      - FEISHU_VERIFICATION_TOKEN=${FEISHU_VERIFICATION_TOKEN}
+      - FEISHU_ENCRYPT_KEY=${FEISHU_ENCRYPT_KEY}
+      - FRONTEND_URL=${FRONTEND_URL}
+    volumes:
+      - uploads_data:/app/data/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  nginx:
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile.web
+    container_name: govcar-nginx
+    restart: unless-stopped
+    ports:
+      - '80:80'
+    depends_on:
+      - server
+
+volumes:
+  mysql_data:
+  uploads_data:
