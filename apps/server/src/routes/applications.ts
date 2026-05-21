@@ -10,7 +10,7 @@ function generateApplicationNo(): string {
   return `GC${dateStr}${uuidv4().slice(0, 6).toUpperCase()}`;
 }
 
-const CANCELLABLE = ['DRAFT', 'PENDING_L1', 'PENDING_L2', 'PENDING_DISPATCH', 'RESERVED'];
+const CANCELLABLE = ['DRAFT', 'PENDING_L1', 'PENDING_L2', 'PENDING_L3', 'PENDING_DISPATCH', 'RESERVED'];
 const now = () => new Date().toISOString();
 
 // 获取申请列表
@@ -25,12 +25,12 @@ applicationRoutes.get('/', async (req: Request, res: Response) => {
 
     let list = await store.find(a => a.is_deleted === 0);
 
-    if (!['SYSTEM_ADMIN', 'ADMIN_MANAGER', 'L1_APPROVER', 'L2_APPROVER'].includes(role)) {
+    if (!['SYSTEM_ADMIN', 'ADMIN_MANAGER', 'L1_APPROVER', 'L2_APPROVER', 'SENIOR_VP'].includes(role)) {
       list = list.filter(a => a.applicant_id === userId);
     }
     if (status) {
       if (status === 'PENDING_APPROVAL') {
-        list = list.filter(a => a.status === 'PENDING_L1' || a.status === 'PENDING_L2');
+        list = list.filter(a => a.status === 'PENDING_L1' || a.status === 'PENDING_L2' || a.status === 'PENDING_L3');
       } else {
         list = list.filter(a => a.status === status);
       }
@@ -77,21 +77,37 @@ applicationRoutes.get('/:id', async (req: Request, res: Response) => {
 applicationRoutes.post('/', async (req: Request, res: Response) => {
   try {
     const deptStore = getStore<any>('sys_department');
+    const userStore = getStore<any>('sys_user');
     const store = getStore<any>('car_application');
-    const { application_type, departure_at, return_at, origin, destination, passenger_count, reason, l1_approver_id, l1_approver_name, l2_approver_id, l2_approver_name, remark } = req.body;
+    const { application_type, departure_at, return_at, origin, destination, passenger_count, reason, l1_approver_id, l1_approver_name, l2_approver_id, l2_approver_name, l3_approver_id, l3_approver_name, remark, applicant_id, is_long_distance_300km } = req.body;
 
     if (!['OFFICIAL', 'PRIVATE'].includes(application_type)) {
       res.status(400).json({ code: 400, message: '申请类型无效' }); return;
     }
 
-    const dept = await deptStore.findById(req.user!.department_id);
+    // 用车人：若传了 applicant_id 则用选中的用户，否则用当前登录用户
+    let applicantUserId = req.user!.id;
+    let applicantName = req.user!.name;
+    let applicantDeptId = req.user!.department_id;
+    if (applicant_id && applicant_id !== req.user!.id) {
+      const selectedUser = await userStore.findOne((u: any) => u.id === applicant_id && u.is_deleted === 0);
+      if (selectedUser) {
+        applicantUserId = selectedUser.id;
+        applicantName = selectedUser.name;
+        applicantDeptId = selectedUser.department_id;
+      }
+    }
+
+    const dept = await deptStore.findById(applicantDeptId);
     const app = await store.insert({
-      application_no: generateApplicationNo(), application_type, applicant_id: req.user!.id,
-      applicant_name: req.user!.name, applicant_department_id: req.user!.department_id,
+      application_no: generateApplicationNo(), application_type, applicant_id: applicantUserId,
+      applicant_name: applicantName, applicant_department_id: applicantDeptId,
       applicant_department_name: dept?.name || '',
       departure_at, return_at, origin, destination, passenger_count: passenger_count || 1, reason,
       l1_approver_id: l1_approver_id || null, l1_approver_name: l1_approver_name || null,
       l2_approver_id: l2_approver_id || null, l2_approver_name: l2_approver_name || null,
+      l3_approver_id: l3_approver_id || null, l3_approver_name: l3_approver_name || null,
+      is_long_distance_300km: is_long_distance_300km ? true : false,
       status: 'DRAFT', attachments: null, remark: remark || null,
       cancelled_at: null, cancelled_by: null, cancel_reason: null, change_from_id: null, change_reason: null,
       external_ref_no: null, created_at: now(), updated_at: now(), created_by: req.user!.id, updated_by: req.user!.id, is_deleted: 0,
@@ -136,12 +152,15 @@ applicationRoutes.post('/:id/submit', async (req: Request, res: Response) => {
       res.status(400).json({ code: 400, message: '请先设置一级审批人后再提交' }); return;
     }
 
+    const isLongDistance = app.is_long_distance_300km === true;
+
     await store.update(app.id, { status: 'PENDING_L1', updated_by: req.user!.id, updated_at: now() });
 
     await approvalStore.insert({ application_id: app.id, feishu_approval_code: null, feishu_approval_task_id: null, approval_level: 'L1', approver_id: app.l1_approver_id, approver_name: app.l1_approver_name, action: null, comment: null, acted_at: null, sync_status: 'PENDING', raw_callback: null, created_at: now(), updated_at: now() });
 
     const logStore = getStore<any>('car_application_operation_log');
-    await logStore.insert({ application_id: app.id, operation: 'SUBMIT', operator_id: req.user!.id, operator_name: req.user!.name, from_status: 'DRAFT', to_status: 'PENDING_L1', detail: '提交申请', created_at: now() });
+    const detail = isLongDistance ? '提交申请（长途>300km，需常务副总裁+行政经理审批）' : '提交申请';
+    await logStore.insert({ application_id: app.id, operation: 'SUBMIT', operator_id: req.user!.id, operator_name: req.user!.name, from_status: 'DRAFT', to_status: 'PENDING_L1', detail, created_at: now() });
 
     res.json({ code: 0, data: { status: 'PENDING_L1' } });
   } catch (e: any) {
@@ -194,7 +213,7 @@ applicationRoutes.post('/:id/change', async (req: Request, res: Response) => {
     const app = await store.findOne(a => a.id === Number(req.params.id) && a.is_deleted === 0);
     if (!app) { res.status(404).json({ code: 404, message: '申请不存在' }); return; }
 
-    const changeable = ['PENDING_L1', 'PENDING_L2', 'REJECTED'];
+    const changeable = ['PENDING_L1', 'PENDING_L2', 'PENDING_L3', 'REJECTED'];
     if (!changeable.includes(app.status)) { res.status(400).json({ code: 400, message: `当前状态 ${app.status} 不支持变更` }); return; }
 
     const { change_reason, ...updates } = req.body;
@@ -207,6 +226,8 @@ applicationRoutes.post('/:id/change', async (req: Request, res: Response) => {
       passenger_count: updates.passenger_count || app.passenger_count, reason: updates.reason || app.reason,
       l1_approver_id: updates.l1_approver_id || app.l1_approver_id, l1_approver_name: updates.l1_approver_name || app.l1_approver_name,
       l2_approver_id: updates.l2_approver_id || app.l2_approver_id, l2_approver_name: updates.l2_approver_name || app.l2_approver_name,
+      l3_approver_id: updates.l3_approver_id || app.l3_approver_id, l3_approver_name: updates.l3_approver_name || app.l3_approver_name,
+      is_long_distance_300km: updates.is_long_distance_300km != null ? updates.is_long_distance_300km : app.is_long_distance_300km,
       status: 'DRAFT', change_from_id: app.id, change_reason: change_reason || null,
       attachments: null, remark: app.remark, cancelled_at: null, cancelled_by: null, cancel_reason: null,
       external_ref_no: null, created_at: now(), updated_at: now(), created_by: req.user!.id, updated_by: req.user!.id, is_deleted: 0,

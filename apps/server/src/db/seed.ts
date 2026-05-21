@@ -15,9 +15,10 @@ export async function seedIfEmpty() {
   const userStore = getStore<any>('sys_user');
   await userStore.insert({ open_id: 'admin', union_id: null, name: '系统管理员', employee_no: '001', mobile: '13800000001', email: 'admin@company.com', avatar_url: null, role: 'SYSTEM_ADMIN', department_id: 1, status: 'ACTIVE', created_at: now, updated_at: now, created_by: null, updated_by: null, is_deleted: 0 });
   await userStore.insert({ open_id: 'manager', union_id: null, name: '李经理', employee_no: '002', mobile: '13800000002', email: 'manager@company.com', avatar_url: null, role: 'ADMIN_MANAGER', department_id: 2, status: 'ACTIVE', created_at: now, updated_at: now, created_by: null, updated_by: null, is_deleted: 0 });
-  await userStore.insert({ open_id: 'emp01', union_id: null, name: '张小明', employee_no: '003', mobile: '13800000003', email: 'zhangxm@company.com', avatar_url: null, role: 'EMPLOYEE', department_id: 3, status: 'ACTIVE', created_at: now, updated_at: now, created_by: null, updated_by: null, is_deleted: 0 });
+  await userStore.insert({ open_id: 'emp01', union_id: null, name: '张小明', employee_no: '003', mobile: '13800000003', email: 'zhangxm@company.com', avatar_url: null, role: 'EMPLOYEE', department_id: 3, leader_open_id: null, leader_user_id: 4, status: 'ACTIVE', created_at: now, updated_at: now, created_by: null, updated_by: null, is_deleted: 0 });
   await userStore.insert({ open_id: 'l1_approver', union_id: null, name: '王部长', employee_no: '004', mobile: '13800000004', email: 'wangbz@company.com', avatar_url: null, role: 'L1_APPROVER', department_id: 3, status: 'ACTIVE', created_at: now, updated_at: now, created_by: null, updated_by: null, is_deleted: 0 });
   await userStore.insert({ open_id: 'driver01', union_id: null, name: '赵司机', employee_no: '005', mobile: '13800000005', email: null, avatar_url: null, role: 'DRIVER', department_id: 2, status: 'ACTIVE', created_at: now, updated_at: now, created_by: null, updated_by: null, is_deleted: 0 });
+  await userStore.insert({ open_id: 'vp001', union_id: null, name: '常务副总裁', employee_no: '006', mobile: '13800000006', email: 'vp@company.com', avatar_url: null, role: 'SENIOR_VP', department_id: 1, status: 'ACTIVE', created_at: now, updated_at: now, created_by: null, updated_by: null, is_deleted: 0 });
 
   // 司机
   const driverStore = getStore<any>('car_driver');

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Table, Tag, Button, Modal, InputNumber, Input, Select, DatePicker, Space, Card, Typography, App, Descriptions, Upload, Image, Switch } from 'antd';
+import { Table, Tag, Button, Modal, InputNumber, Input, Select, DatePicker, Space, Card, Typography, App, Descriptions, Upload, Image, Switch, Popconfirm } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { UploadOutlined, CameraOutlined, ScanOutlined, LoadingOutlined } from '@ant-design/icons';
+import { UploadOutlined, CameraOutlined, ScanOutlined, LoadingOutlined, DeleteOutlined, ExportOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { consumptionApi } from '../api';
+import { consumptionApi, dispatchApi, authApi } from '../api';
 import { fmtTime } from '../utils/format';
 import dayjs from 'dayjs';
 
@@ -34,14 +34,42 @@ export default function ConsumptionPage() {
   const [startFileList, setStartFileList] = useState<UploadFile[]>([]);
   const [endFileList, setEndFileList] = useState<UploadFile[]>([]);
   const [ocrLoading, setOcrLoading] = useState<'start' | 'end' | null>(null);
+  const [role, setRole] = useState('');
   const { message } = App.useApp();
+
+  const isAdmin = role === 'SYSTEM_ADMIN' || role === 'ADMIN_MANAGER';
 
   const fetchData = () => {
     setLoading(true);
     consumptionApi.list({ pageSize: 50 }).then(res => setData(res.data.data.list || [])).finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    authApi.getMe().then(res => setRole(res.data.data?.role || ''));
+    fetchData();
+  }, []);
+
+  const handleDelete = async (id: number) => {
+    try {
+      await consumptionApi.remove(id);
+      message.success('已删除');
+      fetchData();
+    } catch { message.error('删除失败'); }
+  };
+
+  const handleExport = async () => {
+    try {
+      const res = await consumptionApi.export();
+      const blob = new Blob([res.data], { type: 'text/csv; charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `consumptions_${dayjs().format('YYYYMMDD')}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success('导出成功');
+    } catch { message.error('导出失败'); }
+  };
 
   const openRecordModal = async () => {
     try {
@@ -53,6 +81,23 @@ export default function ConsumptionPage() {
     setEndFileList([]);
     setOcrLoading(null);
     setRecordModal(true);
+  };
+
+  const [returnLoading, setReturnLoading] = useState(false);
+
+  const handleReturn = async (dispatchId: number) => {
+    setReturnLoading(true);
+    try {
+      const res = await dispatchApi.returnVehicle(dispatchId);
+      message.success(`收车成功：${res.data.data.vehicle} / ${res.data.data.driver} 已释放`);
+      // 刷新派车列表
+      const refresh = await consumptionApi.myDispatches();
+      setDispatches(refresh.data.data || []);
+    } catch (e: any) {
+      message.error(e.response?.data?.message || '收车失败');
+    } finally {
+      setReturnLoading(false);
+    }
   };
 
   const handleDispatchSelect = (dispatchId: number) => {
@@ -189,11 +234,16 @@ export default function ConsumptionPage() {
         const item = map[v] || { color: 'default', text: v };
         return <Tag color={item.color}>{item.text}</Tag>;
       } },
-    { title: '操作', width: 140, render: (_: any, r: any) => (
-      <>
+    { title: '操作', width: isAdmin ? 200 : 140, render: (_: any, r: any) => (
+      <Space size={4}>
         {r.status === 'PENDING_CONFIRM' && <Button size="small" type="primary" onClick={() => handleConfirm(r.id)}>确认</Button>}
         {r.status === 'PENDING_L2_CONFIRM' && <Button size="small" type="primary" onClick={() => handleAdminConfirm(r.id)}>复核通过</Button>}
-      </>
+        {isAdmin && (
+          <Popconfirm title="确定删除此记录？" onConfirm={() => handleDelete(r.id)}>
+            <Button size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        )}
+      </Space>
     )},
   ];
 
@@ -201,7 +251,10 @@ export default function ConsumptionPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>消耗管理</Title>
-        <Button type="primary" onClick={openRecordModal}>录入消耗</Button>
+        <Space>
+          {isAdmin && <Button icon={<ExportOutlined />} onClick={handleExport}>导出CSV</Button>}
+          <Button type="primary" onClick={openRecordModal}>录入消耗</Button>
+        </Space>
       </div>
       <Card>
         <Table columns={columns} dataSource={data} rowKey="id" loading={loading} pagination={false} scroll={{ x: 1400 }} />
@@ -231,6 +284,19 @@ export default function ConsumptionPage() {
               <Descriptions.Item label="目的地">{selectedDispatch.destination}</Descriptions.Item>
             </Descriptions>
           )}
+
+          {dispatches.length > 0 && (() => {
+            const targetDispatch = formData.dispatch_id ? selectedDispatch : (dispatches.length === 1 ? dispatches[0] : null);
+            if (!targetDispatch || targetDispatch.status === 'COMPLETED') return null;
+            return (
+            <div style={{ padding: '8px 12px', background: '#fff7e6', borderRadius: 6, border: '1px solid #ffd591', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 13, color: '#ad6800' }}>行程结束？点击"我已收车"即可释放车辆和司机，消耗数据可稍后补录。</span>
+              <Button size="small" type="primary" danger loading={returnLoading}
+                onClick={() => handleReturn(targetDispatch.id)}
+              >我已收车</Button>
+            </div>
+            );
+          })()}
 
           <div style={{ display: 'flex', gap: 12 }}>
             <div style={{ flex: 1 }}>

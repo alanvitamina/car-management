@@ -40,7 +40,7 @@
 
 - 开发规范、路由清单、编码约定：见 [CLAUDE.md](CLAUDE.md)
 - 启动方式：`cd apps/web && npm run dev`（前端 5173）+ `cd apps/server && npm run dev`（后端 8080）
-- 测试账号：admin(1) / manager(2) / emp01(3) / l1_approver(4) / driver01(5)
+- 测试账号：admin(1) / manager(2) / emp01(3) / l1_approver(4) / driver01(5) / vp001(6)
 - 开发模式通过 `x-user-id` header 模拟登录
 
 ## 文档目录
@@ -80,6 +80,7 @@
 - [x] 私车公用补助核算（is_long_distance 决定单价）
 - [x] 司机补助核算（季节×日期类型×时段窗口×倍数）
 - [x] 基础看板和通知
-- [x] 飞书组织架构真实同步
+- [x] 飞书组织架构真实同步（递归树 + 范围选择 + 司机导入）
 - [x] 生产环境 MySQL 切换（MysqlStore 已实现，DB_TYPE 切换）
+- [x] Docker Compose 一键部署（Nginx + Node.js + MySQL）
 - [ ] Agent 能力接入

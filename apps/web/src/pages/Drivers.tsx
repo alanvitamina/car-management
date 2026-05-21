@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Table, Tag, Button, Modal, Form, Input, Select, Space, Card, Typography, App } from 'antd';
+import { useEffect, useState, useMemo } from 'react';
+import { Table, Tag, Button, Modal, Form, Input, Select, Space, Card, Typography, App, Tree, Alert } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, SyncOutlined } from '@ant-design/icons';
+import { PlusOutlined, ImportOutlined } from '@ant-design/icons';
 import { driverApi, authApi, feishuApi } from '../api';
 
 const { Title } = Typography;
@@ -12,12 +12,17 @@ export default function Drivers() {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  const [syncLoading, setSyncLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [role, setRole] = useState('');
   const [form] = Form.useForm();
   const { message } = App.useApp();
+
+  // 导入司机
+  const [importModal, setImportModal] = useState(false);
+  const [orgTree, setOrgTree] = useState<any[]>([]);
+  const [checkedKeys, setCheckedKeys] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
 
   const isAdmin = ADMIN_ROLES.includes(role);
 
@@ -31,17 +36,73 @@ export default function Drivers() {
     fetchData();
   }, []);
 
-  const handleSync = async () => {
-    setSyncLoading(true);
+  const openImportModal = async () => {
+    setImportModal(true);
+    setCheckedKeys([]);
     try {
-      const res = await feishuApi.syncOrg();
-      const d = res.data.data;
-      message.success(`同步完成：部门新增${d.departments?.added || 0} 更新${d.departments?.updated || 0}，用户新增${d.users?.added || 0} 更新${d.users?.updated || 0}`);
-      fetchData();
+      const res = await feishuApi.orgTree();
+      const tree = res.data.data?.tree || [];
+      setOrgTree(tree);
+      if (res.data.data?.mock) {
+        message.info('飞书未配置，显示模拟数据');
+      }
     } catch {
-      message.warning('同步失败，请检查飞书配置');
+      setOrgTree([]);
+      message.error('获取组织架构失败');
+    }
+  };
+
+  // 递归转换组织架构为 Tree 数据（部门在前、人员在后，匹配飞书显示顺序）
+  const toTreeData = (nodes: any[]): any[] => {
+    return nodes.map((dept: any) => ({
+      title: `${dept.name} (${(dept.users || []).length}人)`,
+      key: `dept:${dept.feishu_department_id || dept.name}`,
+      selectable: false,
+      children: [
+        ...toTreeData(dept.children || []),
+        ...(dept.users || []).map((u: any) => ({
+          title: `${u.name}${u.employee_no ? ` (${u.employee_no})` : ''}${u.mobile ? ` - ${u.mobile}` : ''}`,
+          key: `user:${dept.feishu_department_id}:${u.open_id}`,
+          isLeaf: true,
+          user: u,
+        })),
+      ],
+    }));
+  };
+
+  const treeData = useMemo(() => toTreeData(orgTree), [orgTree]);
+
+  const handleImportDrivers = async () => {
+    if (checkedKeys.length === 0) {
+      message.warning('请至少选择一个用户');
+      return;
+    }
+    // 收集选中用户（递归遍历嵌套部门树，按 open_id 去重）
+    const seenOpenIds = new Set<string>();
+    const selectedUsers: any[] = [];
+    function collect(depts: any[]) {
+      for (const dept of depts) {
+        for (const u of (dept.users || [])) {
+          if (checkedKeys.includes(`user:${dept.feishu_department_id}:${u.open_id}`) && !seenOpenIds.has(u.open_id)) {
+            seenOpenIds.add(u.open_id);
+            selectedUsers.push(u);
+          }
+        }
+        if (dept.children) collect(dept.children);
+      }
+    }
+    collect(orgTree);
+    setImporting(true);
+    try {
+      const res = await feishuApi.importDrivers(selectedUsers);
+      const d = res.data.data;
+      message.success(res.data.message || `成功导入 ${d.created} 名司机`);
+      setImportModal(false);
+      fetchData();
+    } catch (e: any) {
+      message.error(e.response?.data?.message || '导入失败');
     } finally {
-      setSyncLoading(false);
+      setImporting(false);
     }
   };
 
@@ -76,7 +137,6 @@ export default function Drivers() {
         };
         return <Tag color={map[v]?.color}>{map[v]?.text || v}</Tag>;
       }},
-    { title: '入职日期', dataIndex: 'hired_date', width: 120 },
     ...(isAdmin ? [{ title: '操作', width: 160, render: (_: any, r: any) => (
       <Space>
         <Button size="small" onClick={() => { setEditing(r); form.setFieldsValue(r); setModalOpen(true); }}>编辑</Button>
@@ -90,7 +150,7 @@ export default function Drivers() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>司机管理</Title>
         <Space>
-          {role === 'SYSTEM_ADMIN' && <Button icon={<SyncOutlined />} onClick={handleSync} loading={syncLoading}>从飞书同步</Button>}
+          {role === 'SYSTEM_ADMIN' && <Button icon={<ImportOutlined />} onClick={openImportModal}>从飞书导入司机</Button>}
           {isAdmin && <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields(); setModalOpen(true); }}>添加司机</Button>}
         </Space>
       </div>
@@ -113,9 +173,34 @@ export default function Drivers() {
               { label: '休息', value: 'REST' }, { label: '休假', value: 'OFF' },
             ]} />
           </Form.Item>
-          <Form.Item name="hired_date" label="入职日期"><Input placeholder="2024-01-01" /></Form.Item>
           <Form.Item name="remark" label="备注"><Input.TextArea rows={2} /></Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="从飞书导入司机"
+        open={importModal}
+        onOk={handleImportDrivers}
+        onCancel={() => setImportModal(false)}
+        confirmLoading={importing}
+        width={520}
+        okText={`导入选中 (${checkedKeys.length})`}
+      >
+        <Alert type="info" message="勾选需要导入为司机的用户，已是司机的用户会自动跳过" style={{ marginBottom: 12 }} />
+        {treeData.length > 0 ? (
+          <Tree
+            checkable
+            selectable={false}
+            treeData={treeData}
+            checkedKeys={checkedKeys}
+            onCheck={(keys) => setCheckedKeys(keys as string[])}
+            defaultExpandAll={false}
+            defaultExpandedKeys={orgTree.map((d: any) => `dept:${d.feishu_department_id || d.name}`)}
+            style={{ maxHeight: 400, overflow: 'auto' }}
+          />
+        ) : (
+          <div style={{ textAlign: 'center', padding: 24, color: '#999' }}>加载中...</div>
+        )}
       </Modal>
     </div>
   );

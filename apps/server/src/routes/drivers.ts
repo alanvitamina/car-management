@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getStore } from '../db/database';
 import { requireRole } from '../middleware/auth';
+import { autoReleaseOverdue } from './dispatches';
 
 export const driverRoutes = Router();
 const adminRoles = ['SYSTEM_ADMIN', 'ADMIN_MANAGER'];
@@ -29,6 +30,7 @@ driverRoutes.get('/', async (req: Request, res: Response) => {
 
 driverRoutes.get('/available', async (_req: Request, res: Response) => {
   try {
+    await autoReleaseOverdue();
     const store = getStore<any>('car_driver');
     const list = await store.find(d => d.status === 'AVAILABLE' && d.is_deleted === 0);
     res.json({ code: 0, data: list });

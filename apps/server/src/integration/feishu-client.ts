@@ -83,23 +83,43 @@ export async function getUserInfo(userAccessToken: string): Promise<FeishuUserIn
 // ============================================================
 export async function getDepartmentList(parentDeptId?: string): Promise<any[]> {
   const appToken = await getAppAccessToken();
-  const params = new URLSearchParams({ page_size: '50' });
-  if (parentDeptId) params.set('parent_department_id', parentDeptId);
+  let allItems: any[] = [];
+  let pageToken = '';
 
-  const data = await feishuRequest<{ data: { items: any[]; has_more: boolean; page_token: string } }>(
-    'GET', `/contact/v3/departments?${params.toString()}`, undefined, appToken
-  );
-  return data.data.items;
+  do {
+    const params = new URLSearchParams({ page_size: '50' });
+    if (parentDeptId) params.set('parent_department_id', parentDeptId);
+    if (pageToken) params.set('page_token', pageToken);
+
+    const data = await feishuRequest<{ data: { items: any[]; has_more: boolean; page_token: string } }>(
+      'GET', `/contact/v3/departments?${params.toString()}`, undefined, appToken
+    );
+    allItems = allItems.concat(data.data.items || []);
+    pageToken = data.data.page_token;
+    if (!data.data.has_more) break;
+  } while (true);
+
+  return allItems;
 }
 
 export async function getDepartmentAllUsers(deptId: string): Promise<any[]> {
   const appToken = await getAppAccessToken();
-  const params = new URLSearchParams({ department_id_type: 'department_id', page_size: '50', department_id: deptId });
+  let allItems: any[] = [];
+  let pageToken = '';
 
-  const data = await feishuRequest<{ data: { items: any[]; has_more: boolean; page_token: string } }>(
-    'GET', `/contact/v3/users?${params.toString()}`, undefined, appToken
-  );
-  return data.data.items;
+  do {
+    const params = new URLSearchParams({ department_id_type: 'open_department_id', page_size: '50', department_id: deptId });
+    if (pageToken) params.set('page_token', pageToken);
+
+    const data = await feishuRequest<{ data: { items: any[]; has_more: boolean; page_token: string } }>(
+      'GET', `/contact/v3/users?${params.toString()}`, undefined, appToken
+    );
+    allItems = allItems.concat(data.data.items || []);
+    pageToken = data.data.page_token;
+    if (!data.data.has_more) break;
+  } while (true);
+
+  return allItems;
 }
 
 // ============================================================

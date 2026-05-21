@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getStore } from '../db/database';
 import { requireRole } from '../middleware/auth';
+import { autoReleaseOverdue } from './dispatches';
 
 export const vehicleRoutes = Router();
 const adminRoles = ['SYSTEM_ADMIN', 'ADMIN_MANAGER'];
@@ -29,6 +30,7 @@ vehicleRoutes.get('/', async (req: Request, res: Response) => {
 
 vehicleRoutes.get('/available', async (req: Request, res: Response) => {
   try {
+    await autoReleaseOverdue();
     const store = getStore<any>('car_vehicle');
     const dispatchStore = getStore<any>('car_dispatch_record');
     const { departure_at, return_at } = req.query;

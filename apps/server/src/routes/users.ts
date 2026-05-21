@@ -4,6 +4,23 @@ import { requireRole } from '../middleware/auth';
 
 export const userRoutes = Router();
 
+// 用户选择器（所有登录用户可用）
+userRoutes.get('/simple', async (_req: Request, res: Response) => {
+  try {
+    const store = getStore<any>('sys_user');
+    const deptStore = getStore<any>('sys_department');
+    const users = await store.find(u => u.is_deleted === 0 && u.status === 'ACTIVE');
+    const list = await Promise.all(users.map(async u => {
+      const dept = await deptStore.findById(u.department_id);
+      return { id: u.id, name: u.name, department_id: u.department_id, department_name: dept?.name || '', employee_no: u.employee_no };
+    }));
+    list.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+    res.json({ code: 0, data: list });
+  } catch (e: any) {
+    res.status(500).json({ code: 500, message: e.message });
+  }
+});
+
 userRoutes.get('/', requireRole('SYSTEM_ADMIN', 'ADMIN_MANAGER'), async (req: Request, res: Response) => {
   try {
     const store = getStore<any>('sys_user');
@@ -80,6 +97,19 @@ userRoutes.put('/:id', requireRole('SYSTEM_ADMIN'), async (req: Request, res: Re
 
     const updated = await store.update(id, { ...updates, updated_by: req.user!.id, updated_at: new Date().toISOString() });
     res.json({ code: 0, data: updated });
+  } catch (e: any) {
+    res.status(500).json({ code: 500, message: e.message });
+  }
+});
+
+userRoutes.delete('/:id', requireRole('SYSTEM_ADMIN'), async (req: Request, res: Response) => {
+  try {
+    const store = getStore<any>('sys_user');
+    const id = Number(req.params.id);
+    const user = await store.findById(id);
+    if (!user) { res.status(404).json({ code: 404, message: '用户不存在' }); return; }
+    await store.update(id, { is_deleted: 1, updated_by: req.user!.id, updated_at: new Date().toISOString() });
+    res.json({ code: 0, message: '已删除' });
   } catch (e: any) {
     res.status(500).json({ code: 500, message: e.message });
   }

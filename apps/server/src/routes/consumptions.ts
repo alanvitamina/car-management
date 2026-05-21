@@ -90,16 +90,28 @@ async function ocrMileageFromImage(filepath: string): Promise<{ mileage: number 
   }
 }
 
-// 获取可录入消耗的派车记录（本人的 IN_PROGRESS 调度）
+// 获取可录入消耗的派车记录（IN_PROGRESS + 已收车但未录入消耗的 COMPLETED 派车单）
 consumptionRoutes.get('/my-dispatches', async (req: Request, res: Response) => {
   try {
     const dispatchStore = getStore<any>('car_dispatch_record');
     const appStore = getStore<any>('car_application');
+    const consumptionStore = getStore<any>('car_consumption_record');
 
-    let dispatches = await dispatchStore.find(d => d.status === 'IN_PROGRESS');
+    let dispatches = await dispatchStore.find(d => d.status === 'IN_PROGRESS' || d.status === 'COMPLETED');
     if (req.user!.role === 'DRIVER') {
-      dispatches = dispatches.filter(d => d.driver_id === req.user!.id);
+      const driverStore = getStore<any>('car_driver');
+      const driver = await driverStore.findOne(d => d.user_id === req.user!.id && d.is_deleted === 0);
+      if (driver) {
+        dispatches = dispatches.filter(d => d.driver_id === driver.id);
+      } else {
+        dispatches = [];
+      }
     }
+
+    // 排除已有消耗记录的 COMPLETED 派车单（已完成的不用再录入）
+    const consumptionRecords = await consumptionStore.find(c => c.is_deleted !== 1);
+    const consumedAppIds = new Set(consumptionRecords.map(c => c.application_id));
+    dispatches = dispatches.filter(d => d.status === 'IN_PROGRESS' || !consumedAppIds.has(d.application_id));
 
     const enriched = await Promise.all(dispatches.map(async d => {
       const app = await appStore.findById(d.application_id);
@@ -265,7 +277,7 @@ consumptionRoutes.get('/', async (req: Request, res: Response) => {
     const page = Number(req.query.page) || 1;
     const pageSize = Number(req.query.pageSize) || 20;
 
-    let list = await store.all();
+    let list = await store.find(r => r.is_deleted !== 1);
     if (application_id) list = list.filter(r => r.application_id === Number(application_id));
     if (status) list = list.filter(r => r.status === status);
 
@@ -335,11 +347,10 @@ consumptionRoutes.get('/', async (req: Request, res: Response) => {
       if (pending.length === 0) {
         await appStore.update(record.application_id, { status: 'COMPLETED', updated_at: now() });
 
+        // 将仍在 IN_PROGRESS 的派车单标记完成（车辆/司机已通过收车操作释放）
         const dispatches = await dispatchStore.find(d => d.application_id === record.application_id && d.status === 'IN_PROGRESS');
         for (const d of dispatches) {
-          await dispatchStore.update(d.id, { actual_return_at: record.actual_return_at || now(), status: 'COMPLETED', updated_at: now() });
-          await vehicleStore.update(d.vehicle_id, { status: 'AVAILABLE', updated_at: now() });
-          await driverStore.update(d.driver_id, { status: 'AVAILABLE', updated_at: now() });
+          await dispatchStore.update(d.id, { status: 'COMPLETED', updated_at: now() });
         }
       }
 
@@ -356,6 +367,49 @@ consumptionRoutes.get('/', async (req: Request, res: Response) => {
       res.status(500).json({ code: 500, message: e.message });
     }
   });
+
+// 删除消耗记录（软删除，仅管理员）
+consumptionRoutes.delete('/:id', requireRole('SYSTEM_ADMIN', 'ADMIN_MANAGER'), async (req: Request, res: Response) => {
+  try {
+    const store = getStore<any>('car_consumption_record');
+    const record = await store.findById(Number(req.params.id));
+    if (!record) { res.status(404).json({ code: 404, message: '消耗记录不存在' }); return; }
+    await store.update(record.id, { is_deleted: 1, updated_at: now() });
+    res.json({ code: 0, message: '已删除' });
+  } catch (e: any) {
+    res.status(500).json({ code: 500, message: e.message });
+  }
+});
+
+// CSV 导出（仅管理员）
+consumptionRoutes.get('/export', requireRole('SYSTEM_ADMIN', 'ADMIN_MANAGER'), async (req: Request, res: Response) => {
+  try {
+    const store = getStore<any>('car_consumption_record');
+    const appStore = getStore<any>('car_application');
+    const records = await store.find(r => r.is_deleted !== 1);
+
+    const enriched = await Promise.all(records.map(async r => {
+      const app = await appStore.findById(r.application_id);
+      return { ...r, application_no: app?.application_no || '', application_type: app?.application_type || '' };
+    }));
+
+    const headers = ['申请编号', '类型', '实际出发时间', '实际返回时间', '时长(分钟)', '出发里程', '返回里程', '行驶里程', '路桥费', '停车费', '车杂费', '合计', '录入人', '状态', '创建时间'];
+    const rows = enriched.map(r => [
+      r.application_no, r.application_type === 'OFFICIAL' ? '公务' : '私车',
+      r.actual_departure_at || '', r.actual_return_at || '', r.duration_minutes || '',
+      r.start_mileage || '', r.end_mileage || '', r.total_mileage || '',
+      r.toll_amount || 0, r.parking_amount || 0, r.other_amount || 0, r.total_amount || 0,
+      r.recorded_by_name || '', r.status || '', r.created_at || '',
+    ]);
+
+    const csvContent = '﻿' + [headers.join(','), ...rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="consumptions_${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csvContent);
+  } catch (e: any) {
+    res.status(500).json({ code: 500, message: e.message });
+  }
+});
 
 consumptionRoutes.post('/:id/reject', requireRole('SYSTEM_ADMIN', 'ADMIN_MANAGER'), async (req: Request, res: Response) => {
   try {

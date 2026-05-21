@@ -13,14 +13,16 @@ export const authApi = {
 // Users
 export const userApi = {
   list: (params?: any) => client.get('/users', { params }),
+  simple: () => client.get('/users/simple'),
   todoSummary: () => client.get('/users/todo-summary'),
   update: (id: number, data: any) => client.put(`/users/${id}`, data),
+  remove: (id: number) => client.delete(`/users/${id}`),
 };
 
 // Departments
 export const deptApi = {
   tree: () => client.get('/departments/tree'),
-  getApprover: (deptId: number) => client.get(`/departments/${deptId}/approver`),
+  getApprover: (deptId: number, userId?: number) => client.get(`/departments/${deptId}/approver`, { params: userId ? { user_id: userId } : {} }),
 };
 
 // Vehicles
@@ -66,6 +68,7 @@ export const dispatchApi = {
   create: (data: any) => client.post('/dispatches', data),
   reassign: (id: number, data: any) => client.put(`/dispatches/${id}/reassign`, data),
   start: (id: number) => client.post(`/dispatches/${id}/start`),
+  returnVehicle: (id: number) => client.post(`/dispatches/${id}/return`),
 };
 
 // Consumption
@@ -78,6 +81,8 @@ export const consumptionApi = {
   confirm: (id: number) => client.post(`/consumptions/${id}/confirm`),
   adminConfirm: (id: number) => client.post(`/consumptions/${id}/admin-confirm`),
   reject: (id: number, reason: string) => client.post(`/consumptions/${id}/reject`, { reason }),
+  remove: (id: number) => client.delete(`/consumptions/${id}`),
+  export: () => client.get('/consumptions/export', { responseType: 'blob' }),
 };
 
 // Subsidy
@@ -88,6 +93,8 @@ export const subsidyApi = {
   calculateDriver: (data: any) => client.post('/subsidies/calculate/driver', data),
   driverOvertimeSummary: (params?: any) => client.get('/subsidies/driver-overtime-summary', { params }),
   settlements: (params?: any) => client.get('/subsidies/settlements', { params }),
+  removeSettlement: (id: number) => client.delete(`/subsidies/settlements/${id}`),
+  exportSettlements: () => client.get('/subsidies/settlements/export', { responseType: 'blob' }),
 };
 
 // Dashboard
@@ -107,5 +114,7 @@ export const notificationApi = {
 export const feishuApi = {
   createApproval: (applicationId: number) => client.post('/feishu/create-approval', { application_id: applicationId }),
   sendMessage: (data: any) => client.post('/feishu/send-message', data),
-  syncOrg: () => client.post('/feishu/sync-org'),
+  syncOrg: (scope?: { department_ids?: string[]; user_open_ids?: string[] }) => client.post('/feishu/sync-org', scope || {}),
+  importDrivers: (users: any[]) => client.post('/feishu/import-drivers', { users }),
+  orgTree: () => client.get('/feishu/org-tree'),
 };

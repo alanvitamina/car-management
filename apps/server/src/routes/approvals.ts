@@ -3,7 +3,7 @@ import { getStore } from '../db/database';
 import { requireRole } from '../middleware/auth';
 
 export const approvalRoutes = Router();
-const approverRoles = ['L1_APPROVER', 'L2_APPROVER', 'ADMIN_MANAGER', 'SYSTEM_ADMIN'];
+const approverRoles = ['L1_APPROVER', 'L2_APPROVER', 'SENIOR_VP', 'ADMIN_MANAGER', 'SYSTEM_ADMIN'];
 const now = () => new Date().toISOString();
 
 approvalRoutes.get('/pending', requireRole(...approverRoles), async (req: Request, res: Response) => {
@@ -12,12 +12,14 @@ approvalRoutes.get('/pending', requireRole(...approverRoles), async (req: Reques
     const role = req.user!.role;
 
     let list: any[];
-    if (role === 'L1_APPROVER') {
+    if (role === 'SENIOR_VP') {
+      list = await store.find(a => a.status === 'PENDING_L2' && a.is_long_distance_300km === true && a.is_deleted === 0);
+    } else if (role === 'L1_APPROVER') {
       list = await store.find(a => a.status === 'PENDING_L1' && a.is_deleted === 0);
     } else if (role === 'L2_APPROVER') {
-      list = await store.find(a => a.status === 'PENDING_L2' && a.is_deleted === 0);
+      list = await store.find(a => (a.status === 'PENDING_L3' || (a.status === 'PENDING_L2' && a.is_long_distance_300km !== true)) && a.is_deleted === 0);
     } else {
-      list = await store.find(a => (a.status === 'PENDING_L1' || a.status === 'PENDING_L2') && a.is_deleted === 0);
+      list = await store.find(a => (a.status === 'PENDING_L1' || a.status === 'PENDING_L2' || a.status === 'PENDING_L3') && a.is_deleted === 0);
     }
 
     list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -34,19 +36,39 @@ approvalRoutes.post('/:id/approve', requireRole(...approverRoles), async (req: R
     if (!app) { res.status(404).json({ code: 404, message: '申请不存在' }); return; }
 
     const role = req.user!.role;
+    const isLongDistance = app.is_long_distance_300km === true;
     let newStatus: string, approvalLevel: string;
 
+    // L1 审批：部门负责人 → 通过后创建 L2 审批记录
     if (app.status === 'PENDING_L1' && ['L1_APPROVER', 'ADMIN_MANAGER', 'SYSTEM_ADMIN'].includes(role)) {
-      newStatus = app.l2_approver_id ? 'PENDING_L2' : 'PENDING_DISPATCH';
+      newStatus = 'PENDING_L2';
       approvalLevel = 'L1';
       if (app.l2_approver_id) {
         const approvalStore = getStore<any>('car_approval_record');
         await approvalStore.insert({ application_id: app.id, feishu_approval_code: null, feishu_approval_task_id: null, approval_level: 'L2', approver_id: app.l2_approver_id, approver_name: app.l2_approver_name, action: null, comment: null, acted_at: null, sync_status: 'PENDING', raw_callback: null, created_at: now(), updated_at: now() });
       }
-    } else if (app.status === 'PENDING_L2' && ['L2_APPROVER', 'ADMIN_MANAGER', 'SYSTEM_ADMIN'].includes(role)) {
+    }
+    // L2 审批 (长途>300km)：常务副总裁
+    else if (app.status === 'PENDING_L2' && isLongDistance && ['SENIOR_VP', 'ADMIN_MANAGER', 'SYSTEM_ADMIN'].includes(role)) {
+      newStatus = 'PENDING_L3';
+      approvalLevel = 'L2';
+      // 创建 L3 审批记录（行政经理）到已批准的 L2 审批之后
+      if (app.l3_approver_id) {
+        const approvalStore = getStore<any>('car_approval_record');
+        await approvalStore.insert({ application_id: app.id, feishu_approval_code: null, feishu_approval_task_id: null, approval_level: 'L3', approver_id: app.l3_approver_id, approver_name: app.l3_approver_name, action: null, comment: null, acted_at: null, sync_status: 'PENDING', raw_callback: null, created_at: now(), updated_at: now() });
+      }
+    }
+    // L2 审批 (非长途)：行政经理
+    else if (app.status === 'PENDING_L2' && !isLongDistance && ['L2_APPROVER', 'ADMIN_MANAGER', 'SYSTEM_ADMIN'].includes(role)) {
       newStatus = 'PENDING_DISPATCH';
       approvalLevel = 'L2';
-    } else {
+    }
+    // L3 审批 (长途>300km)：行政经理终审
+    else if (app.status === 'PENDING_L3' && ['L2_APPROVER', 'ADMIN_MANAGER', 'SYSTEM_ADMIN'].includes(role)) {
+      newStatus = 'PENDING_DISPATCH';
+      approvalLevel = 'L3';
+    }
+    else {
       res.status(400).json({ code: 400, message: '当前状态不可审批或无权审批' }); return;
     }
 
@@ -73,9 +95,9 @@ approvalRoutes.post('/:id/reject', requireRole(...approverRoles), async (req: Re
     const store = getStore<any>('car_application');
     const app = await store.findOne(a => a.id === Number(req.params.id) && a.is_deleted === 0);
     if (!app) { res.status(404).json({ code: 404, message: '申请不存在' }); return; }
-    if (!['PENDING_L1', 'PENDING_L2'].includes(app.status)) { res.status(400).json({ code: 400, message: '当前状态不可审批' }); return; }
+    if (!['PENDING_L1', 'PENDING_L2', 'PENDING_L3'].includes(app.status)) { res.status(400).json({ code: 400, message: '当前状态不可审批' }); return; }
 
-    const approvalLevel = app.status === 'PENDING_L1' ? 'L1' : 'L2';
+    const approvalLevel = app.status === 'PENDING_L1' ? 'L1' : app.status === 'PENDING_L2' ? 'L2' : 'L3';
     await store.update(app.id, { status: 'REJECTED', updated_by: req.user!.id, updated_at: now() });
 
     const { comment } = req.body;

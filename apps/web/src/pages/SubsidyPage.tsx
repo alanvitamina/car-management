@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Table, Tag, Button, Modal, Select, Card, Typography, App, Descriptions, Tabs, Collapse } from 'antd';
+import { Table, Tag, Button, Modal, Select, Card, Typography, App, Descriptions, Tabs, Collapse, Popconfirm, Space } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { CaretRightOutlined } from '@ant-design/icons';
-import { subsidyApi, applicationApi } from '../api';
+import { CaretRightOutlined, DeleteOutlined, ExportOutlined } from '@ant-design/icons';
+import { subsidyApi, applicationApi, authApi } from '../api';
 import { fmtTime } from '../utils/format';
 
 const { Title, Text, Paragraph } = Typography;
@@ -17,7 +17,10 @@ export default function SubsidyPage() {
   const [formData, setFormData] = useState<any>({});
   const [selectedApp, setSelectedApp] = useState<any>(null);
   const [calcResult, setCalcResult] = useState<any>(null);
+  const [role, setRole] = useState('');
   const { message } = App.useApp();
+
+  const isAdmin = role === 'SYSTEM_ADMIN' || role === 'ADMIN_MANAGER';
 
   const fetchData = () => {
     setLoading(true);
@@ -30,7 +33,32 @@ export default function SubsidyPage() {
     }).finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    authApi.getMe().then(res => setRole(res.data.data?.role || ''));
+    fetchData();
+  }, []);
+
+  const handleDelete = async (id: number) => {
+    try {
+      await subsidyApi.removeSettlement(id);
+      message.success('已删除');
+      fetchData();
+    } catch { message.error('删除失败'); }
+  };
+
+  const handleExport = async () => {
+    try {
+      const res = await subsidyApi.exportSettlements();
+      const blob = new Blob([res.data], { type: 'text/csv; charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `subsidy_settlements_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success('导出成功');
+    } catch { message.error('导出失败'); }
+  };
 
   const openCalcModal = async (type: 'private' | 'driver') => {
     try {
@@ -82,6 +110,11 @@ export default function SubsidyPage() {
     { title: '核算人', dataIndex: 'calculated_by_name', width: 90 },
     { title: '时间', dataIndex: 'calculated_at', width: 155, render: (v: string) => fmtTime(v) },
     { title: '备注', dataIndex: 'remark', width: 200, ellipsis: true },
+    ...(isAdmin ? [{ title: '操作', width: 60, render: (_: any, r: any) => (
+      <Popconfirm title="确定删除此记录？" onConfirm={() => handleDelete(r.id)}>
+        <Button size="small" danger icon={<DeleteOutlined />} />
+      </Popconfirm>
+    )}] : []),
   ];
 
   const privateCarRules = rules.filter(r => r.rule_type === 'PRIVATE_CAR_MILEAGE').sort((a, b) => (a.min_value || 0) - (b.min_value || 0));
@@ -90,10 +123,11 @@ export default function SubsidyPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>补助核算</Title>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <Space>
+          {isAdmin && <Button icon={<ExportOutlined />} onClick={handleExport}>导出CSV</Button>}
           <Button type="primary" onClick={() => openCalcModal('private')}>私车里程核算</Button>
           <Button onClick={() => openCalcModal('driver')}>司机加班核算</Button>
-        </div>
+        </Space>
       </div>
 
       {/* 补助规则详细说明 */}

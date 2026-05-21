@@ -303,6 +303,50 @@ subsidyRoutes.get('/driver-overtime-summary', requireRole(...mgmtRoles), async (
   }
 });
 
+// 删除核算记录（软删除，仅管理员）
+subsidyRoutes.delete('/settlements/:id', requireRole(...mgmtRoles), async (req: Request, res: Response) => {
+  try {
+    const store = getStore<any>('car_subsidy_settlement');
+    const record = await store.findById(Number(req.params.id));
+    if (!record) { res.status(404).json({ code: 404, message: '核算记录不存在' }); return; }
+    await store.update(record.id, { is_deleted: 1, updated_at: now() });
+    res.json({ code: 0, message: '已删除' });
+  } catch (e: any) {
+    res.status(500).json({ code: 500, message: e.message });
+  }
+});
+
+// CSV 导出（仅管理员）
+subsidyRoutes.get('/settlements/export', requireRole(...mgmtRoles), async (req: Request, res: Response) => {
+  try {
+    const store = getStore<any>('car_subsidy_settlement');
+    const appStore = getStore<any>('car_application');
+    const records = await store.find(s => s.is_deleted !== 1);
+
+    const enriched = await Promise.all(records.map(async s => {
+      const app = await appStore.findById(s.application_id);
+      return { ...s, application_no: app?.application_no || '', applicant_name: app?.applicant_name || '' };
+    }));
+
+    const headers = ['申请编号', '申请人', '核算类型', '核算里程', '里程补助', '加班时数', '出车次数', '合计', '核算人', '核算时间', '备注'];
+    const rows = enriched.map(s => [
+      s.application_no || '', s.applicant_name || '',
+      s.settlement_type === 'PRIVATE_CAR' ? '私车补助' : '司机加班',
+      s.approved_mileage || '', s.mileage_subsidy || '',
+      s.overtime_hours || '', s.driver_trip_count || '',
+      s.total_subsidy || '', s.calculated_by_name || '',
+      s.calculated_at || '', s.remark || '',
+    ]);
+
+    const csvContent = '﻿' + [headers.join(','), ...rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="subsidy_settlements_${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csvContent);
+  } catch (e: any) {
+    res.status(500).json({ code: 500, message: e.message });
+  }
+});
+
 subsidyRoutes.get('/settlements', async (req: Request, res: Response) => {
   try {
     const store = getStore<any>('car_subsidy_settlement');
@@ -311,7 +355,7 @@ subsidyRoutes.get('/settlements', async (req: Request, res: Response) => {
     const page = Number(req.query.page) || 1;
     const pageSize = Number(req.query.pageSize) || 20;
 
-    let list = await store.all();
+    let list = await store.find(s => s.is_deleted !== 1);
     if (application_id) list = list.filter(s => s.application_id === Number(application_id));
     if (settlement_type) list = list.filter(s => s.settlement_type === settlement_type);
 
