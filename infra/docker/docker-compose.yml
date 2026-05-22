@@ -19,6 +19,8 @@ services:
       test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost']
       interval: 10s
       retries: 5
+    networks:
+      - govcar-net
 
   server:
     build:
@@ -41,12 +43,17 @@ services:
       - FEISHU_APP_SECRET=${FEISHU_APP_SECRET}
       - FEISHU_VERIFICATION_TOKEN=${FEISHU_VERIFICATION_TOKEN}
       - FEISHU_ENCRYPT_KEY=${FEISHU_ENCRYPT_KEY}
+      - FEISHU_REDIRECT_URI=${FEISHU_REDIRECT_URI}
       - FRONTEND_URL=${FRONTEND_URL}
     volumes:
       - uploads_data:/app/data/uploads
+    ports:
+      - '8080:8080'
     depends_on:
       mysql:
         condition: service_healthy
+    networks:
+      - govcar-net
 
   nginx:
     build:
@@ -58,7 +65,13 @@ services:
       - '80:80'
     depends_on:
       - server
+    networks:
+      - govcar-net
 
 volumes:
   mysql_data:
   uploads_data:
+
+networks:
+  govcar-net:
+    driver: bridge
